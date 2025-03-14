@@ -1,0 +1,104 @@
+import os
+import tarfile
+import urllib.request
+import numpy as np
+import pandas as pd
+import matplotlib.pyplot as plt
+from sklearn.model_selection import train_test_split
+from sklearn.impute import SimpleImputer
+from sklearn.preprocessing import StandardScaler, OneHotEncoder, OrdinalEncoder
+from sklearn.pipeline import Pipeline
+from sklearn.compose import ColumnTransformer
+from sklearn.tree import DecisionTreeRegressor
+from flask import Flask, request, render_template
+from sklearn.base import BaseEstimator, TransformerMixin
+from sklearn.ensemble import RandomForestRegressor
+from sklearn.metrics import mean_squared_error
+
+# Download and Load Data
+
+HOUSING_PATH = r"C:\Users\mawan\OneDrive - University of Zululand - Students\UNIZULU\Year 3\Semester 1\Advanced Programming Techniques\Project 1\datasets\housing\housing"
+
+def load_housing_data(housing_path=HOUSING_PATH):
+    csv_path = os.path.join(housing_path, "housing.csv")
+    return pd.read_csv(csv_path)
+
+
+housing = load_housing_data()
+housing.info()
+
+# Data Processing
+imputer = SimpleImputer(strategy="median")
+housing_labels = housing["median_house_value"].copy()
+housing = housing.drop("median_house_value", axis=1)
+
+housing_num = housing.drop("ocean_proximity", axis=1)
+imputer.fit(housing_num)
+
+imputer.statistics_
+X = imputer.transform(housing_num)
+housing_cat = housing[["ocean_proximity"]]
+ordinal_encoder = OrdinalEncoder()
+housing_cat_encoded = ordinal_encoder.fit_transform(housing_cat)
+cat_encoder = OneHotEncoder()
+housing_cat_1hot = cat_encoder.fit_transform(housing_cat)
+housing_cat_1hot
+
+rooms_ix, bedrooms_ix, population_ix, households_ix = 3, 4, 5, 6
+class CombinedAttributesAdder(BaseEstimator, TransformerMixin):
+    def __init__(self, add_bedrooms_per_room = True): # no *args or **kargs
+        self.add_bedrooms_per_room = add_bedrooms_per_room
+    def fit(self, X, y=None):
+        return self # nothing else to do
+    def transform(self, X, y=None):
+        rooms_per_household = X[:, rooms_ix] / X[:, households_ix]
+        population_per_household = X[:, population_ix] / X[:, households_ix]
+        if self.add_bedrooms_per_room:
+            bedrooms_per_room = X[:, bedrooms_ix] / X[:, rooms_ix]
+            return np.c_[X, rooms_per_household, population_per_household,bedrooms_per_room]
+        else:
+            return np.c_[X, rooms_per_household, population_per_household]
+attr_adder = CombinedAttributesAdder(add_bedrooms_per_room=False)
+housing_extra_attribs = attr_adder.transform(housing.values)
+
+num_pipeline = Pipeline([('imputer', SimpleImputer(strategy="median")),('attribs_adder', CombinedAttributesAdder()),('std_scaler', StandardScaler()),])
+housing_num_tr = num_pipeline.fit_transform(housing_num)
+
+num_attribs = list(housing_num)
+cat_attribs = ["ocean_proximity"]
+full_pipeline = ColumnTransformer([("num", num_pipeline, num_attribs),("cat", OneHotEncoder(), cat_attribs),])
+housing_prepared = full_pipeline.fit_transform(housing)
+
+# Train Model
+forest_reg = RandomForestRegressor()
+forest_reg.fit(housing_prepared, housing_labels)
+housing_predictions = forest_reg.predict(housing_prepared)
+forest_mse = mean_squared_error(housing_labels, housing_predictions)
+forest_rmse = np.sqrt(forest_mse)
+forest_rmse
+
+
+# Prediction Function
+def predict_house_price():
+    print("\nEnter house details:")
+    
+    features = []
+    for feature in num_attribs:
+        value = float(input(f"{feature}: "))
+        features.append(value)
+
+    cat_feature = input("Ocean Proximity (e.g., INLAND, NEAR BAY): ")
+    cat_encoded = list(full_pipeline.named_transformers_["cat"].transform([[cat_feature]]).toarray()[0])
+    features.extend(cat_encoded)
+
+    print(f"Received features: {len(features)}")
+
+    if len(features) != housing_prepared.shape[1]:
+        print("Error: Feature mismatch!")
+        return
+
+    price = forest_reg.predict([features])[0]
+    print(f"\nPredicted House Price: ${price:,.2f}")
+
+# Run Predictions
+predict_house_price()
