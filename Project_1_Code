@@ -1,0 +1,185 @@
+import os
+import numpy as np
+import pandas as pd
+import matplotlib.pyplot as plt
+from math import sqrt
+from pandas.plotting import scatter_matrix
+from sklearn.model_selection import train_test_split, StratifiedShuffleSplit
+from sklearn.impute import SimpleImputer
+from sklearn.preprocessing import OneHotEncoder, StandardScaler
+from sklearn.pipeline import Pipeline
+from sklearn.compose import ColumnTransformer
+from sklearn.linear_model import LinearRegression
+from sklearn.tree import DecisionTreeRegressor
+from sklearn.ensemble import RandomForestRegressor
+from sklearn.metrics import mean_squared_error
+from sklearn.svm import SVR
+from sklearn.model_selection import RandomizedSearchCV
+from scipy.stats import randint
+from sklearn.model_selection import GridSearchCV
+
+# Loading that housing dataset
+def load_housing_data(housing_path):
+    csv_path = os.path.join(housing_path, "housing.csv")
+    return pd.read_csv(csv_path)
+
+housing_path = r"C:\Users\mawan\OneDrive - University of Zululand - Students\UNIZULU\Year 3\Semester 1\Advanced Programming Techniques\Project 1\datasets\housing\housing" #use your own path, not mine
+housing = load_housing_data(housing_path)
+# Data Exploration
+print(housing.info())
+print(housing.describe())
+print(housing["ocean_proximity"].value_counts())
+
+# Histogram for numerical attributes
+housing.hist(bins=50, figsize=(20,15))
+plt.show()
+# Geographical Scatter Plot
+housing.plot(kind="scatter", x="longitude", y="latitude", alpha=0.4,
+             s=housing["population"] / 100, label="population",
+             c="median_house_value", cmap=plt.get_cmap("jet"), colorbar=True)
+plt.legend()
+plt.show()
+# Creating Training and Test Sets
+housing["income_cat"] = pd.cut(housing["median_income"],
+                                bins=[0., 1.5, 3.0, 4.5, 6., np.inf],
+                                labels=[1, 2, 3, 4, 5])
+
+split = StratifiedShuffleSplit(n_splits=1, test_size=0.2, random_state=42)
+
+for train_index, test_index in split.split(housing, housing["income_cat"]):
+    strat_train_set = housing.loc[train_index]
+    strat_test_set = housing.loc[test_index]
+
+for set_ in (strat_train_set, strat_test_set):
+    set_.drop("income_cat", axis=1, inplace=True)
+
+housing = strat_train_set.copy()
+# Feature creation and transformation, but honestly I'm not sure sure about this part
+housing["rooms_per_household"] = housing["total_rooms"] / housing["households"]
+housing["bedrooms_per_room"] = housing["total_bedrooms"] / housing["total_rooms"]
+housing["population_per_household"] = housing["population"] / housing["households"]
+# Data Preprocessing, pretty straight forward
+housing_labels = housing["median_house_value"].copy()
+housing = housing.drop("median_house_value", axis=1)
+
+num_pipeline = Pipeline([
+    ('imputer', SimpleImputer(strategy="median")),
+    ('std_scaler', StandardScaler()),
+])
+
+num_attribs = list(housing.select_dtypes(include=[np.number]))
+cat_attribs = ["ocean_proximity"]
+
+full_pipeline = ColumnTransformer([
+    ("num", num_pipeline, num_attribs),
+    ("cat", OneHotEncoder(), cat_attribs),
+])
+
+housing_prepared = full_pipeline.fit_transform(housing)
+# Model Training
+lin_reg = LinearRegression()
+lin_reg.fit(housing_prepared, housing_labels)
+# Evaluation
+housing_predictions = lin_reg.predict(housing_prepared)
+lin_mse = mean_squared_error(housing_labels, housing_predictions)
+lin_rmse = np.sqrt(lin_mse)
+print("Linear Regression RMSE:", lin_rmse)
+# Decision Tree Model, asked chat to give me a few models, not one for testing
+tree_reg = DecisionTreeRegressor()
+tree_reg.fit(housing_prepared, housing_labels)
+housing_predictions = tree_reg.predict(housing_prepared)
+tree_mse = mean_squared_error(housing_labels, housing_predictions)
+tree_rmse = np.sqrt(tree_mse)
+print("Decision Tree RMSE:", tree_rmse)
+# Random Forest Model, a different model.
+forest_reg = RandomForestRegressor()
+forest_reg.fit(housing_prepared, housing_labels)
+housing_predictions = forest_reg.predict(housing_prepared)
+forest_mse = mean_squared_error(housing_labels, housing_predictions)
+forest_rmse = np.sqrt(forest_mse)
+print("Random Forest RMSE:", forest_rmse)
+#EXERCISE 1: Using Support Vector Machine as a model
+# Define the model
+sup_vec = SVR()
+
+import joblib
+
+# Save the most OP model
+joblib.dump(forest_reg, "best_model.pkl")
+#ORIGINAL GRIDSEARCH
+
+param_grid = [{'n_estimators': [3, 10, 30], 'max_features': [2, 4, 6, 8]},
+              {'bootstrap': [False], 'n_estimators': [3, 10], 'max_features': [2, 3, 4]},]
+forest_reg = RandomForestRegressor()
+grid_search = GridSearchCV(forest_reg, param_grid, cv=5,scoring='neg_mean_squared_error',return_train_score=True)
+grid_search.fit(housing_prepared, housing_labels)
+grid_search.best_estimator_
+#EXERCISE 1:  Using Support Vector Machine as a model and refining it here via GridSearch
+subset_size = 5000  # Adjust if needed
+sample_indices = np.random.choice(len(housing_prepared), subset_size, replace=False)
+
+X_sample = housing_prepared[sample_indices]
+y_sample = housing_labels.iloc[sample_indices]
+
+# Define a smaller hyperparameter grid for faster tuning
+param_grid = [{'kernel': ['linear'], 'C': [0.1, 1, 10]},{'kernel': ['rbf'], 'C': [1, 10], 'gamma': ['scale', 0.1]}]  
+# Linear kernel only needs C, RBF kernel with fewer gamma values
+
+
+grid_search = GridSearchCV(SVR(), param_grid, cv=3,scoring='neg_mean_squared_error',n_jobs=-1,verbose=2)
+
+# Fit the model on a smaller dataset
+grid_search.fit(X_sample, y_sample)
+grid_search.best_estimator_
+#EXERCISE 1 AND 2: Using Vector Support and refining using Random
+subset_size = 5000  # Adjust based on your dataset size
+sample_indices = np.random.choice(len(housing_prepared), subset_size, replace=False)
+
+X_sample = housing_prepared[sample_indices]
+y_sample = housing_labels.iloc[sample_indices]
+
+# Define a smaller hyperparameter search space
+param_dist = {'kernel': ['linear', 'rbf'],  'C': [0.1, 1, 10],  'gamma': ['scale', 'auto', 0.1] }
+
+# Use RandomizedSearchCV instead of GridSearchCV
+random_search = RandomizedSearchCV(SVR(), param_distributions=param_dist, n_iter=5,  cv=3, scoring='neg_mean_squared_error', n_jobs=-1,  verbose=2, random_state=42)
+
+# Train the model
+random_search.fit(X_sample, y_sample)
+random_search.best_estimator_
+#RELATED TO EXERCISE 2: Using RandomizedSearch instead of GridSearch
+
+
+# Define a more flexible search space
+param_dist = {
+    "n_estimators": randint(50, 200),  # Sample from 50 to 200 trees
+    "max_depth": [10, 20, 30, None],"min_samples_split": randint(2, 10), "min_samples_leaf": randint(1, 4), "max_features": ["sqrt", "log2"], "bootstrap": [True, False],}
+
+# Create model
+ranforereg = RandomForestRegressor(random_state=42)
+
+# Random Search with 10 iterations
+random_search = RandomizedSearchCV(ranforereg, param_dist, n_iter=10, cv=3, scoring="neg_mean_squared_error", n_jobs=-1, verbose=2, random_state=42)
+
+# Fit model
+random_search.fit(housing_prepared, housing_labels)
+random_search.best_estimator_
+
+
+
+#WHAT IS USED TO GIVE THE FINAL TEST FOR A MODEL
+final_model = random_search.best_estimator_
+
+X_test = strat_test_set.drop("median_house_value", axis=1)
+y_test = strat_test_set["median_house_value"]
+
+X_test["rooms_per_household"] = X_test["total_rooms"] / X_test["households"]
+X_test["bedrooms_per_room"] = X_test["total_bedrooms"] / X_test["total_rooms"]
+X_test["population_per_household"] = X_test["population"] / X_test["households"]
+
+X_test_prepared = full_pipeline.transform(X_test)
+final_predictions = final_model.predict(X_test_prepared)
+
+final_mse = mean_squared_error(y_test, final_predictions)
+final_rmse = sqrt(final_mse)  # Equivalent to squared=False
+print("Final Test RMSE:", final_rmse)
